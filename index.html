@@ -411,6 +411,110 @@
       color: var(--text-muted);
     }
 
+    .comments-toggle {
+      width: 100%;
+      margin-top: 0.75rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.5rem;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .comments-toggle:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .comments-section {
+      margin-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      padding-top: 0.75rem;
+    }
+
+    .comments-section.hidden { display: none; }
+
+    .comment {
+      padding: 0.6rem 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .comment:last-of-type { border-bottom: none; }
+
+    .comment-meta {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .comment-meta .comment-author {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .comment-body {
+      font-size: 0.9rem;
+      line-height: 1.4;
+      color: var(--text);
+    }
+
+    .comment-form {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .comment-form input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+
+    .comment-form input:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .comment-form input[name="comment-body"] {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .comment-form input[name="comment-author"] {
+      width: 100px;
+    }
+
+    .comment-form button {
+      background: var(--primary);
+      border: none;
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+
+    .comment-form button:hover {
+      box-shadow: 0 4px 12px var(--primary-glow);
+    }
+
+    .no-comments {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-style: italic;
+      padding: 0.5rem 0;
+    }
+
     @media (max-width: 600px) {
       header h1 { font-size: 2.2rem; }
       header p { font-size: 0.95rem; }
@@ -419,6 +523,12 @@
         flex-direction: column;
         align-items: flex-start;
         gap: 0.75rem;
+      }
+      .comment-form {
+        flex-wrap: wrap;
+      }
+      .comment-form input[name="comment-author"] {
+        width: 100%;
       }
     }
   </style>
@@ -487,10 +597,12 @@
   let currentFilter = 'open';
   let requests = [];
   let userVotes = {};
+  let comments = {};
+  let openComments = {};
   let completingId = null;
 
   async function init() {
-    await Promise.all([loadRequests(), loadUserVotes()]);
+    await Promise.all([loadRequests(), loadUserVotes(), loadComments()]);
     render();
     subscribe();
   }
@@ -522,6 +634,15 @@
     const { data } = await sb.from('gslop_votes').select('request_id, vote_type').eq('device_id', deviceId);
     userVotes = {};
     (data || []).forEach(v => { userVotes[v.request_id] = v.vote_type; });
+  }
+
+  async function loadComments() {
+    const { data } = await sb.from('gslop_comments').select('*').order('created_at', { ascending: true });
+    comments = {};
+    (data || []).forEach(c => {
+      if (!comments[c.request_id]) comments[c.request_id] = [];
+      comments[c.request_id].push(c);
+    });
   }
 
   function render() {
@@ -563,6 +684,22 @@
             <div class="meta">${r.submitted_by ? esc(r.submitted_by) + ' &middot; ' : ''}${timeAgo(r.created_at)}</div>
           </div>
           ${!r.is_completed ? `<button class="complete-btn" onclick="openUploadModal('${r.id}')">&#x1F4F8; Upload Completion</button>` : ''}
+          <button class="comments-toggle" onclick="toggleComments('${r.id}')">&#x1F4AC; Comments (${(comments[r.id] || []).length})</button>
+          <div class="comments-section ${openComments[r.id] ? '' : 'hidden'}" id="comments-${r.id}">
+            ${(comments[r.id] || []).length
+              ? (comments[r.id]).map(c => `
+                <div class="comment">
+                  <div class="comment-meta"><span class="comment-author">${esc(c.author || 'Anon')}</span> &middot; ${timeAgo(c.created_at)}</div>
+                  <div class="comment-body">${esc(c.body)}</div>
+                </div>`).join('')
+              : '<div class="no-comments">No comments yet</div>'
+            }
+            <div class="comment-form">
+              <input type="text" name="comment-body" placeholder="Add a comment..." onkeydown="if(event.key==='Enter')submitComment('${r.id}',this)">
+              <input type="text" name="comment-author" placeholder="Name" onkeydown="if(event.key==='Enter')submitComment('${r.id}',this.previousElementSibling)">
+              <button onclick="submitComment('${r.id}',this.parentElement.querySelector('[name=comment-body]'))">Post</button>
+            </div>
+          </div>
         </div>`;
     }).join('');
   }
@@ -660,6 +797,23 @@
     render();
   }
 
+  function toggleComments(requestId) {
+    openComments[requestId] = !openComments[requestId];
+    render();
+  }
+
+  async function submitComment(requestId, bodyInput) {
+    const body = bodyInput.value.trim();
+    if (!body) return;
+    const authorInput = bodyInput.parentElement.querySelector('[name=comment-author]');
+    const author = authorInput.value.trim() || null;
+
+    await sb.from('gslop_comments').insert({ request_id: requestId, body, author });
+    bodyInput.value = '';
+    await loadComments();
+    render();
+  }
+
   function subscribe() {
     sb.channel('all-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_requests' }, async () => {
@@ -668,6 +822,10 @@
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_votes' }, async () => {
         await Promise.all([loadRequests(), loadUserVotes()]);
+        render();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_comments' }, async () => {
+        await loadComments();
         render();
       })
       .subscribe();

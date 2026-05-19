@@ -22,8 +22,18 @@ create table gslop_votes (
   unique(request_id, device_id)
 );
 
+create table gslop_comments (
+  id uuid default gen_random_uuid() primary key,
+  request_id uuid references gslop_requests(id) on delete cascade,
+  body text not null,
+  author text,
+  created_at timestamptz default now()
+);
+
 alter table gslop_requests enable row level security;
 alter table gslop_votes enable row level security;
+alter table gslop_comments enable row level security;
 
 create policy "public_all" on gslop_requests for all using (true) with check (true);
 create policy "public_all" on gslop_votes for all using (true) with check (true);
+create policy "public_all" on gslop_comments for all using (true) with check (true);
