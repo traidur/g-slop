@@ -569,12 +569,12 @@
       <h2>Upload Completion</h2>
       <div class="upload-area" id="uploadArea" onclick="document.getElementById('imageInput').click()">
         <input type="file" id="imageInput" accept="image/*" onchange="previewImage(this)">
-        <p>Click to select image (max 5 MB)</p>
+        <p>Click to select image (max 10 MB)</p>
       </div>
       <img id="imagePreview" class="image-preview hidden">
       <div class="modal-actions">
         <button class="btn-secondary" onclick="closeUploadModal()">Cancel</button>
-        <button class="btn-primary" id="uploadBtn" onclick="uploadCompletion()" disabled>Upload & Complete</button>
+        <button class="btn-primary" id="uploadBtn" onclick="uploadCompletion()" disabled>Upload</button>
       </div>
     </div>
   </div>
@@ -598,11 +598,12 @@
   let requests = [];
   let userVotes = {};
   let comments = {};
+  let completions = {};
   let openComments = {};
   let completingId = null;
 
   async function init() {
-    await Promise.all([loadRequests(), loadUserVotes(), loadComments()]);
+    await Promise.all([loadRequests(), loadUserVotes(), loadComments(), loadCompletions()]);
     render();
     subscribe();
   }
@@ -636,6 +637,15 @@
     (data || []).forEach(v => { userVotes[v.request_id] = v.vote_type; });
   }
 
+  async function loadCompletions() {
+    const { data } = await sb.from('gslop_completions').select('*').order('created_at', { ascending: true });
+    completions = {};
+    (data || []).forEach(c => {
+      if (!completions[c.request_id]) completions[c.request_id] = [];
+      completions[c.request_id].push(c);
+    });
+  }
+
   async function loadComments() {
     const { data } = await sb.from('gslop_comments').select('*').order('created_at', { ascending: true });
     comments = {};
@@ -648,8 +658,9 @@
   function render() {
     const filtered = requests
       .filter(r => {
-        if (currentFilter === 'open') return !r.is_completed;
-        if (currentFilter === 'completed') return r.is_completed;
+        const hasCompletions = (completions[r.id] || []).length > 0;
+        if (currentFilter === 'open') return !hasCompletions;
+        if (currentFilter === 'completed') return hasCompletions;
         return true;
       })
       .sort((a, b) => b.score - a.score || new Date(b.created_at) - new Date(a.created_at));
@@ -667,15 +678,17 @@
     list.innerHTML = filtered.map(r => {
       const uv = userVotes[r.id] || 0;
       const sc = r.score > 0 ? 'positive' : r.score < 0 ? 'negative' : 'neutral';
+      const imgs = completions[r.id] || [];
+      const hasCompletions = imgs.length > 0;
       return `
-        <div class="card ${r.is_completed ? 'completed' : ''}">
-          ${r.is_completed ? '<div class="completed-badge">&#x2713; Completed</div>' : ''}
+        <div class="card ${hasCompletions ? 'completed' : ''}">
+          ${hasCompletions ? '<div class="completed-badge">&#x2713; Completed</div>' : ''}
           <div class="card-header">
             <h3>${esc(r.title)}</h3>
             <div class="score ${sc}">${r.score > 0 ? '+' : ''}${r.score}</div>
           </div>
           ${r.description ? `<p class="description">${esc(r.description)}</p>` : ''}
-          ${r.completed_image_url ? `<img src="${esc(r.completed_image_url)}" class="completion-image" onclick="openLightbox('${esc(r.completed_image_url)}')">` : ''}
+          ${imgs.map(img => `<img src="${esc(img.image_url)}" class="completion-image" onclick="openLightbox('${esc(img.image_url)}')">`).join('')}
           <div class="card-footer">
             <div class="vote-buttons">
               <button class="vote-btn up ${uv === 1 ? 'active' : ''}" onclick="vote('${r.id}', 1)">&#x1F44D; ${r.up}</button>
@@ -683,7 +696,7 @@
             </div>
             <div class="meta">${r.submitted_by ? esc(r.submitted_by) + ' &middot; ' : ''}${timeAgo(r.created_at)}</div>
           </div>
-          ${!r.is_completed ? `<button class="complete-btn" onclick="openUploadModal('${r.id}')">&#x1F4F8; Upload Completion</button>` : ''}
+          <button class="complete-btn" onclick="openUploadModal('${r.id}')">&#x1F4F8; Upload Image</button>
           <button class="comments-toggle" onclick="toggleComments('${r.id}')">&#x1F4AC; Comments (${(comments[r.id] || []).length})</button>
           <div class="comments-section ${openComments[r.id] ? '' : 'hidden'}" id="comments-${r.id}">
             ${(comments[r.id] || []).length
@@ -750,8 +763,8 @@
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Image must be under 5 MB.');
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Image must be under 10 MB.');
       input.value = '';
       return;
     }
@@ -782,18 +795,19 @@
     if (uploadErr) {
       alert('Upload failed: ' + uploadErr.message);
       btn.disabled = false;
-      btn.textContent = 'Upload & Complete';
+      btn.textContent = 'Upload';
       return;
     }
 
     const { data: { publicUrl } } = sb.storage.from('completions').getPublicUrl(path);
 
-    await sb.from('gslop_requests')
-      .update({ is_completed: true, completed_image_url: publicUrl })
-      .eq('id', completingId);
+    await sb.from('gslop_completions').insert({
+      request_id: completingId,
+      image_url: publicUrl
+    });
 
     closeUploadModal();
-    await loadRequests();
+    await loadCompletions();
     render();
   }
 
@@ -822,6 +836,10 @@
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_votes' }, async () => {
         await Promise.all([loadRequests(), loadUserVotes()]);
+        render();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_completions' }, async () => {
+        await loadCompletions();
         render();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_comments' }, async () => {
@@ -855,9 +873,9 @@
     document.getElementById('imageInput').value = '';
     document.getElementById('imagePreview').classList.add('hidden');
     document.getElementById('uploadBtn').disabled = true;
-    document.getElementById('uploadBtn').textContent = 'Upload & Complete';
+    document.getElementById('uploadBtn').textContent = 'Upload';
     document.getElementById('uploadArea').classList.remove('has-file');
-    document.getElementById('uploadArea').querySelector('p').textContent = 'Click to select image (max 5 MB)';
+    document.getElementById('uploadArea').querySelector('p').textContent = 'Click to select image (max 10 MB)';
     document.getElementById('uploadModal').classList.remove('hidden');
   }
 
