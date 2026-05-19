@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>G-SLOP | Gemini Image Request Board</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0a1a;
+      --surface: rgba(255, 255, 255, 0.05);
+      --surface-hover: rgba(255, 255, 255, 0.08);
+      --border: rgba(255, 255, 255, 0.1);
+      --text: #e0e0e0;
+      --text-muted: #777;
+      --primary: #8b5cf6;
+      --primary-glow: rgba(139, 92, 246, 0.3);
+      --accent: #06b6d4;
+      --upvote: #22c55e;
+      --upvote-bg: rgba(34, 197, 94, 0.15);
+      --downvote: #ef4444;
+      --downvote-bg: rgba(239, 68, 68, 0.15);
+      --completed: #f59e0b;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      background-image:
+        radial-gradient(ellipse at 20% 50%, rgba(139, 92, 246, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(6, 182, 212, 0.06) 0%, transparent 50%);
+    }
+
+    header {
+      text-align: center;
+      padding: 3rem 1rem 1.5rem;
+    }
+
+    header h1 {
+      font-size: 3.5rem;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: 0.08em;
+    }
+
+    header p {
+      color: var(--text-muted);
+      margin: 0.5rem 0 1.5rem;
+      font-size: 1.05rem;
+    }
+
+    .new-btn {
+      background: linear-gradient(135deg, var(--primary), #a78bfa);
+      color: white;
+      border: none;
+      padding: 0.75rem 2rem;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .new-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px var(--primary-glow);
+    }
+
+    .filters {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 1.5rem 1rem;
+    }
+
+    .filter-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.5rem 1.25rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+
+    .filter-btn.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    .filter-btn:hover:not(.active) {
+      background: var(--surface-hover);
+    }
+
+    #requestList {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 1rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      backdrop-filter: blur(10px);
+      transition: all 0.2s;
+    }
+
+    .card:hover {
+      background: var(--surface-hover);
+      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateY(-1px);
+    }
+
+    .card.completed {
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    .completed-badge {
+      color: var(--completed);
+      font-weight: 700;
+      font-size: 0.8rem;
+      margin-bottom: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .card-header h3 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .score {
+      font-size: 1.5rem;
+      font-weight: 800;
+      flex-shrink: 0;
+      min-width: 3rem;
+      text-align: right;
+    }
+
+    .score.positive { color: var(--primary); }
+    .score.neutral { color: var(--text-muted); }
+    .score.negative { color: var(--downvote); }
+
+    .description {
+      color: var(--text-muted);
+      margin: 0.75rem 0;
+      line-height: 1.5;
+      font-size: 0.95rem;
+    }
+
+    .completion-image {
+      width: 100%;
+      max-height: 400px;
+      object-fit: contain;
+      border-radius: 12px;
+      margin: 1rem 0;
+      cursor: pointer;
+      transition: transform 0.2s;
+      background: rgba(0,0,0,0.2);
+    }
+
+    .completion-image:hover {
+      transform: scale(1.01);
+    }
+
+    .card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 1rem;
+    }
+
+    .vote-buttons {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .vote-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.4rem 0.9rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .vote-btn.up:hover { border-color: var(--upvote); color: var(--upvote); }
+    .vote-btn.down:hover { border-color: var(--downvote); color: var(--downvote); }
+    .vote-btn.up.active { background: var(--upvote-bg); border-color: var(--upvote); color: var(--upvote); }
+    .vote-btn.down.active { background: var(--downvote-bg); border-color: var(--downvote); color: var(--downvote); }
+
+    .meta {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .complete-btn {
+      width: 100%;
+      margin-top: 1rem;
+      background: transparent;
+      border: 1px dashed var(--border);
+      color: var(--text-muted);
+      padding: 0.6rem;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+
+    .complete-btn:hover {
+      border-color: var(--completed);
+      color: var(--completed);
+      background: rgba(245, 158, 11, 0.05);
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .modal.hidden { display: none; }
+
+    .modal-content {
+      background: #1a1a2e;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2rem;
+      width: 90%;
+      max-width: 480px;
+    }
+
+    .modal-content h2 {
+      margin-bottom: 1.5rem;
+      font-size: 1.3rem;
+    }
+
+    .modal-content input[type="text"],
+    .modal-content textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+      font-family: inherit;
+    }
+
+    .modal-content textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    .modal-content input:focus,
+    .modal-content textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    .btn-primary {
+      flex: 1;
+      background: linear-gradient(135deg, var(--primary), #a78bfa);
+      color: white;
+      border: none;
+      padding: 0.75rem;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px var(--primary-glow);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.75rem;
+      border-radius: 10px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-secondary:hover {
+      background: var(--surface-hover);
+    }
+
+    .upload-area {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 1rem;
+    }
+
+    .upload-area:hover {
+      border-color: var(--primary);
+      color: var(--text);
+    }
+
+    .upload-area.has-file {
+      border-color: var(--upvote);
+      color: var(--upvote);
+    }
+
+    .upload-area input[type="file"] { display: none; }
+
+    .image-preview {
+      width: 100%;
+      max-height: 250px;
+      object-fit: contain;
+      border-radius: 12px;
+      margin-bottom: 1rem;
+    }
+
+    .image-preview.hidden { display: none; }
+
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      cursor: pointer;
+    }
+
+    .lightbox.hidden { display: none; }
+
+    .lightbox img {
+      max-width: 92vw;
+      max-height: 92vh;
+      border-radius: 8px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 4rem 1rem;
+      color: var(--text-muted);
+    }
+
+    .empty-state .icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    .empty-state p {
+      font-size: 1.05rem;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 4rem;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 600px) {
+      header h1 { font-size: 2.2rem; }
+      header p { font-size: 0.95rem; }
+      .card { padding: 1.25rem; }
+      .card-footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>G-SLOP</h1>
+    <p>Gemini image generation request board</p>
+    <button class="new-btn" onclick="openNewModal()">+ New Request</button>
+  </header>
+
+  <div class="filters">
+    <button class="filter-btn active" data-filter="open" onclick="setFilter('open', this)">Open</button>
+    <button class="filter-btn" data-filter="completed" onclick="setFilter('completed', this)">Completed</button>
+    <button class="filter-btn" data-filter="all" onclick="setFilter('all', this)">All</button>
+  </div>
+
+  <main id="requestList">
+    <div class="loading">Loading...</div>
+  </main>
+
+  <div id="newModal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Submit a Request</h2>
+      <input type="text" id="titleInput" placeholder="What should Gemini generate?">
+      <textarea id="descInput" placeholder="Describe the image in detail (optional)"></textarea>
+      <input type="text" id="nameInput" placeholder="Your name (optional)">
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeNewModal()">Cancel</button>
+        <button class="btn-primary" onclick="submitRequest()">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="uploadModal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Upload Completion</h2>
+      <div class="upload-area" id="uploadArea" onclick="document.getElementById('imageInput').click()">
+        <input type="file" id="imageInput" accept="image/*" onchange="previewImage(this)">
+        <p>Click to select image (max 5 MB)</p>
+      </div>
+      <img id="imagePreview" class="image-preview hidden">
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeUploadModal()">Cancel</button>
+        <button class="btn-primary" id="uploadBtn" onclick="uploadCompletion()" disabled>Upload & Complete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="lightbox" class="lightbox hidden" onclick="closeLightbox()">
+    <img id="lightboxImg" src="">
+  </div>
+
+<script>
+  const SUPABASE_URL = 'https://wpllxvuyzemjsdbaljyp.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndwbGx4dnV5emVtanNkYmFsanlwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzNjY2NTEsImV4cCI6MjA5MTk0MjY1MX0.MOTpzpp2ckzq62QwzxQae5cjoqLiqTaY9pSDrxBgZ-s';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let deviceId = localStorage.getItem('g-slop-device');
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    localStorage.setItem('g-slop-device', deviceId);
+  }
+
+  let currentFilter = 'open';
+  let requests = [];
+  let userVotes = {};
+  let completingId = null;
+
+  async function init() {
+    await Promise.all([loadRequests(), loadUserVotes()]);
+    render();
+    subscribe();
+  }
+
+  async function loadRequests() {
+    const [{ data: reqs }, { data: votes }] = await Promise.all([
+      sb.from('gslop_requests').select('*'),
+      sb.from('gslop_votes').select('request_id, vote_type')
+    ]);
+
+    if (!reqs) return;
+
+    const scores = {};
+    (votes || []).forEach(v => {
+      if (!scores[v.request_id]) scores[v.request_id] = { up: 0, down: 0 };
+      if (v.vote_type === 1) scores[v.request_id].up++;
+      else scores[v.request_id].down++;
+    });
+
+    requests = reqs.map(r => ({
+      ...r,
+      up: scores[r.id]?.up || 0,
+      down: scores[r.id]?.down || 0,
+      score: (scores[r.id]?.up || 0) - (scores[r.id]?.down || 0)
+    }));
+  }
+
+  async function loadUserVotes() {
+    const { data } = await sb.from('gslop_votes').select('request_id, vote_type').eq('device_id', deviceId);
+    userVotes = {};
+    (data || []).forEach(v => { userVotes[v.request_id] = v.vote_type; });
+  }
+
+  function render() {
+    const filtered = requests
+      .filter(r => {
+        if (currentFilter === 'open') return !r.is_completed;
+        if (currentFilter === 'completed') return r.is_completed;
+        return true;
+      })
+      .sort((a, b) => b.score - a.score || new Date(b.created_at) - new Date(a.created_at));
+
+    const list = document.getElementById('requestList');
+
+    if (!filtered.length) {
+      const msg = currentFilter === 'completed'
+        ? 'No completed requests yet.'
+        : 'No requests yet. Be the first!';
+      list.innerHTML = `<div class="empty-state"><div class="icon">&#x2728;</div><p>${msg}</p></div>`;
+      return;
+    }
+
+    list.innerHTML = filtered.map(r => {
+      const uv = userVotes[r.id] || 0;
+      const sc = r.score > 0 ? 'positive' : r.score < 0 ? 'negative' : 'neutral';
+      return `
+        <div class="card ${r.is_completed ? 'completed' : ''}">
+          ${r.is_completed ? '<div class="completed-badge">&#x2713; Completed</div>' : ''}
+          <div class="card-header">
+            <h3>${esc(r.title)}</h3>
+            <div class="score ${sc}">${r.score > 0 ? '+' : ''}${r.score}</div>
+          </div>
+          ${r.description ? `<p class="description">${esc(r.description)}</p>` : ''}
+          ${r.completed_image_url ? `<img src="${esc(r.completed_image_url)}" class="completion-image" onclick="openLightbox('${esc(r.completed_image_url)}')">` : ''}
+          <div class="card-footer">
+            <div class="vote-buttons">
+              <button class="vote-btn up ${uv === 1 ? 'active' : ''}" onclick="vote('${r.id}', 1)">&#x1F44D; ${r.up}</button>
+              <button class="vote-btn down ${uv === -1 ? 'active' : ''}" onclick="vote('${r.id}', -1)">&#x1F44E; ${r.down}</button>
+            </div>
+            <div class="meta">${r.submitted_by ? esc(r.submitted_by) + ' &middot; ' : ''}${timeAgo(r.created_at)}</div>
+          </div>
+          ${!r.is_completed ? `<button class="complete-btn" onclick="openUploadModal('${r.id}')">&#x1F4F8; Upload Completion</button>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  async function vote(requestId, voteType) {
+    const existing = userVotes[requestId];
+    if (existing === voteType) {
+      await sb.from('gslop_votes').delete().eq('request_id', requestId).eq('device_id', deviceId);
+      delete userVotes[requestId];
+    } else {
+      await sb.from('gslop_votes').upsert(
+        { request_id: requestId, device_id: deviceId, vote_type: voteType },
+        { onConflict: 'request_id,device_id' }
+      );
+      userVotes[requestId] = voteType;
+    }
+    await loadRequests();
+    render();
+  }
+
+  async function submitRequest() {
+    const title = document.getElementById('titleInput').value.trim();
+    const description = document.getElementById('descInput').value.trim();
+    const name = document.getElementById('nameInput').value.trim();
+    if (!title) return;
+
+    await sb.from('gslop_requests').insert({
+      title,
+      description: description || null,
+      submitted_by: name || null
+    });
+
+    closeNewModal();
+    await loadRequests();
+    render();
+  }
+
+  function previewImage(input) {
+    const file = input.files[0];
+    const preview = document.getElementById('imagePreview');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const area = document.getElementById('uploadArea');
+
+    if (!file) {
+      preview.classList.add('hidden');
+      uploadBtn.disabled = true;
+      area.classList.remove('has-file');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Image must be under 5 MB.');
+      input.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      preview.src = e.target.result;
+      preview.classList.remove('hidden');
+      uploadBtn.disabled = false;
+      area.classList.add('has-file');
+      area.querySelector('p').textContent = file.name;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function uploadCompletion() {
+    const file = document.getElementById('imageInput').files[0];
+    if (!file || !completingId) return;
+
+    const btn = document.getElementById('uploadBtn');
+    btn.disabled = true;
+    btn.textContent = 'Uploading...';
+
+    const ext = file.name.split('.').pop();
+    const path = `${completingId}-${Date.now()}.${ext}`;
+
+    const { error: uploadErr } = await sb.storage.from('completions').upload(path, file);
+    if (uploadErr) {
+      alert('Upload failed: ' + uploadErr.message);
+      btn.disabled = false;
+      btn.textContent = 'Upload & Complete';
+      return;
+    }
+
+    const { data: { publicUrl } } = sb.storage.from('completions').getPublicUrl(path);
+
+    await sb.from('gslop_requests')
+      .update({ is_completed: true, completed_image_url: publicUrl })
+      .eq('id', completingId);
+
+    closeUploadModal();
+    await loadRequests();
+    render();
+  }
+
+  function subscribe() {
+    sb.channel('all-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_requests' }, async () => {
+        await loadRequests();
+        render();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gslop_votes' }, async () => {
+        await Promise.all([loadRequests(), loadUserVotes()]);
+        render();
+      })
+      .subscribe();
+  }
+
+  function setFilter(f, el) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+    render();
+  }
+
+  function openNewModal() {
+    document.getElementById('titleInput').value = '';
+    document.getElementById('descInput').value = '';
+    document.getElementById('nameInput').value = '';
+    document.getElementById('newModal').classList.remove('hidden');
+    document.getElementById('titleInput').focus();
+  }
+
+  function closeNewModal() {
+    document.getElementById('newModal').classList.add('hidden');
+  }
+
+  function openUploadModal(id) {
+    completingId = id;
+    document.getElementById('imageInput').value = '';
+    document.getElementById('imagePreview').classList.add('hidden');
+    document.getElementById('uploadBtn').disabled = true;
+    document.getElementById('uploadBtn').textContent = 'Upload & Complete';
+    document.getElementById('uploadArea').classList.remove('has-file');
+    document.getElementById('uploadArea').querySelector('p').textContent = 'Click to select image (max 5 MB)';
+    document.getElementById('uploadModal').classList.remove('hidden');
+  }
+
+  function closeUploadModal() {
+    completingId = null;
+    document.getElementById('uploadModal').classList.add('hidden');
+  }
+
+  function openLightbox(url) {
+    document.getElementById('lightboxImg').src = url;
+    document.getElementById('lightbox').classList.remove('hidden');
+  }
+
+  function closeLightbox() {
+    document.getElementById('lightbox').classList.add('hidden');
+  }
+
+  function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  function timeAgo(dateStr) {
+    const s = Math.floor((Date.now() - new Date(dateStr)) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      closeNewModal();
+      closeUploadModal();
+      closeLightbox();
+    }
+  });
+
+  init();
+</script>
+
+</body>
+</html>
